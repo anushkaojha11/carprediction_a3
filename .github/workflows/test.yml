@@ -73,6 +73,6 @@ jobs:
           # proxy_passphrase: ${{ secrets.PASSPHRASE }}
 
           script: |
-            cd st125985
+            cd st126222
             tag=${{ github.ref_name }} docker compose down
             tag=${{ github.ref_name }} docker compose up -d
