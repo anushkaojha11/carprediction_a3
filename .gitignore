@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtual env
+.venv/
+env/
+venv/
+
+# MLflow and artifacts
+mlruns/
+_mlflow/
+
+# OS files
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
