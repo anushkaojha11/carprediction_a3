@@ -4,7 +4,7 @@ services:
     command: python3 /root/code/app.py
     #command: python app.py
     # command: tail -f /dev/null
-    image: anushkaojha11/a3_car_price_prediction
+    image: anushkaojha11/a3_anushka
 
     environment:
       - HOST=0.0.0.0

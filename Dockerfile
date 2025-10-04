@@ -22,7 +22,7 @@ ENV PYTHONPATH="/root/code:${PYTHONPATH}"
 COPY ./code /root/code
 
 # Expose Dash port
-EXPOSE 8060
+EXPOSE 8080
 
 # Start Dash app
 CMD ["python3", "/root/code/app.py"]

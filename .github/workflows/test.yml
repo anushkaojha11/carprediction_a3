@@ -54,11 +54,11 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t anushkaojha11/a3_car_price_prediction:latest .
+          docker build -t anushkaojha11/a3_anushka:latest .
 
       - name: Push Docker image
         run: |
-          docker push anushkaojha11/a3_car_price_prediction:latest
+          docker push anushkaojha11/a3_anushka:latest
 
       - name: Deploy to AIT server via ProxyJump
         uses: appleboy/ssh-action@v1.0.0
