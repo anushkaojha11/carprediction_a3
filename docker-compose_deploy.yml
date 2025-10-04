@@ -8,14 +8,14 @@ services:
 
     environment:
       - HOST=0.0.0.0
-      - PORT=8080
+      - PORT=80
 
 
     labels:
       # Allow Traefik to talk with your service
       - traefik.enable=true
       # Tell Traefik to use port 80
-      - traefik.http.services.web-st126222.loadbalancer.server.port=8080
+      - traefik.http.services.web-st126222.loadbalancer.server.port=80
       # This config you domain name. By default, your subdomain is web-st126222
       # If you which to change the subdomain name, you uncomment the below configuration
       - traefik.http.routers.web-st126222.rule=Host(`st126222.ml.brain.cs.ait.ac.th`)
