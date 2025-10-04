@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     image: a3_car_price_prediction:latest
     ports:
-      - "8060:8080"
+      - "8060:80"
     volumes:
       - ./code:/root/code
       - ./_mlflow/mlruns:/mlflow/mlruns
