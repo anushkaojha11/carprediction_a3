@@ -15,9 +15,7 @@ services:
     environment:
       # MLflow connection
       PYTHONPATH: "/root/code"
-      MLFLOW_TRACKING_URI: "https://mlflow.ml.brain.cs.ait.ac.th/"
-      MLFLOW_TRACKING_USERNAME: "admin"
-      MLFLOW_TRACKING_PASSWORD: "password"
+      MLFLOW_TRACKING_URI: "https://admin:password@mlflow.ml.brain.cs.ait.ac.th/"
       MODEL_URI: "runs:/affa6ea96a9a4b42938895d7753ae526/model"
     networks:
       - car-network
