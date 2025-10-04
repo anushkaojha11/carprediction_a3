@@ -64,7 +64,7 @@ jobs:
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ vars.HOST }} # final server: ml.brain.cs.ait.ac.th
-          username: ${{ secrets.USERNAME }} # st125985
+          username: ${{ secrets.USERNAME }} # st126222
           key: ${{ secrets.SSH_PRIVATE_KEY }} # private key secret
           # passphrase: ${{ secrets.PASSPHRASE }}
           proxy_host: ${{ vars.PROXY_HOST }} # jump server: bazooka.cs.ait.ac.th
