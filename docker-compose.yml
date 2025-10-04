@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: a3_anushka:latest
+    image: a3_car_price_prediction:latest
     ports:
       - "8060:8080"
     volumes:
