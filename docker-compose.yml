@@ -13,10 +13,16 @@ services:
       - ./_mlflow/mlruns:/mlflow/mlruns
     command: ["python3", "/root/code/app.py"]
     environment:
+      # MLflow connection
       MLFLOW_TRACKING_URI: "http://mlflow.ml.brain.cs.ait.ac.th/"
       MLFLOW_TRACKING_USERNAME: "admin"
       MLFLOW_TRACKING_PASSWORD: "password"
+
+      # App settings
       PYTHONPATH: "/root/code"
+
+      # Point to the model from your specific run ID
+      MODEL_URI: "runs:/affa6ea96a9a4b42938895d7753ae526/model"
     networks:
       - car-network
 
