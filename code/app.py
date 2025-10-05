@@ -115,4 +115,8 @@ def handle_buttons(submit_clicks, clear_clicks, brand, year, max_power, mileage)
 # Run
 # -------------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=80, debug=True)
+    # optional: warm the model so first click is instant
+    from model import load_model
+    load_model()
+
+    app.run(host="0.0.0.0", port=80, debug=False, use_reloader=False)
