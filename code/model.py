@@ -1,14 +1,28 @@
+# model.py — MLflow loader that prefers MODEL_URI and auto-detects run subfolder when needed
 import os
 import time
 import pickle
-import numpy as np
 import logging
+import warnings
+import numpy as np
+import pandas as pd
 import mlflow
 import mlflow.pyfunc
-import pandas as pd
+from mlflow.tracking import MlflowClient
 
-logging.basicConfig(level=logging.INFO)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# --------------------------
+# Logging & TLS warning control
+# --------------------------
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+log = logging.getLogger("model")
+
+# Silence TLS warnings when explicitly allowed via env (dev only)
+try:
+    from urllib3.exceptions import InsecureRequestWarning  # type: ignore
+    if os.getenv("MLFLOW_TRACKING_INSECURE_TLS", "").lower() in ("1", "true", "yes"):
+        warnings.filterwarnings("ignore", category=InsecureRequestWarning)
+except Exception:
+    pass
 
 # --------------------------
 # Paths for scaler and encoders
@@ -44,49 +58,94 @@ def get_X(max_power, mileage, year, brand):
     return X
 
 # --------------------------
-# Load MLflow model
+# MLflow model loader
 # --------------------------
-def load_model():
+def _configure_mlflow():
+    # Auth via env (Basic Auth)
+    if os.getenv("MLFLOW_TRACKING_USERNAME") and os.getenv("MLFLOW_TRACKING_PASSWORD"):
+        # No-op: mlflow reads these from env; we log that they're set
+        log.info("MLFLOW_TRACKING_USERNAME is set")
+
+    # Timeout (seconds)
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", os.getenv("MLFLOW_HTTP_REQUEST_TIMEOUT", "30"))
+
+    # Tracking URI
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
+
+def _auto_detect_artifact_subpath(run_id: str) -> str:
     """
-    Load MLflow model using credentials from environment.
-    Retries up to 5 times in case of failure.
+    Inspect the run's artifact root and pick the subfolder that contains 'MLmodel'.
+    If exactly one subfolder exists, use it.
     """
-    mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "https://mlflow.ml.brain.cs.ait.ac.th/")
-    username = os.getenv("MLFLOW_TRACKING_USERNAME")
-    password = os.getenv("MLFLOW_TRACKING_PASSWORD")
+    c = MlflowClient()
+    root = c.list_artifacts(run_id)  # path=""
+    dirs = [a.path for a in root if a.is_dir]
+    # Prefer a dir that contains 'MLmodel'
+    for d in dirs:
+        files = c.list_artifacts(run_id, path=d)
+        if any((not a.is_dir) and os.path.basename(a.path) == "MLmodel" for a in files):
+            return d
+    # If only one dir, fall back to it
+    if len(dirs) == 1:
+        return dirs[0]
+    raise RuntimeError(
+        f"Could not auto-detect artifact subpath for run {run_id}. "
+        f"Found dirs={dirs}. Set MODEL_URI=runs:/{run_id}/<folder> or MODEL_ARTIFACT_PATH=<folder>."
+    )
 
-    # Set credentials in environment before setting tracking URI
-    if username and password:
-        os.environ["MLFLOW_TRACKING_USERNAME"] = username
-        os.environ["MLFLOW_TRACKING_PASSWORD"] = password
-        logging.info(f"Using MLflow credentials: {username}/*****")
-    else:
-        logging.warning("No MLflow credentials found in environment")
+def _resolve_model_uri() -> str:
+    """
+    Resolution order:
+      1) MODEL_URI (authoritative)
+      2) RUN_ID + (optional) MODEL_ARTIFACT_PATH, else auto-detect subfolder
+      3) models:/<MODEL_NAME>/<MODEL_STAGE or Production>
+    """
+    m = os.getenv("MODEL_URI")
+    if m:
+        return m
 
-    mlflow.set_tracking_uri(mlflow_uri)
+    rid = os.getenv("RUN_ID")
+    if rid:
+        sub = os.getenv("MODEL_ARTIFACT_PATH")
+        if not sub:
+            sub = _auto_detect_artifact_subpath(rid)
+            log.info("Auto-detected artifact subfolder for run %s: %s", rid, sub)
+        return f"runs:/{rid}/{sub}"
 
-    run_id = os.getenv("RUN_ID")
-    model_name = os.getenv("MODEL_NAME", "st126222-a3-model")
-    model_uri = f"runs:/{run_id}/model" if run_id else f"models:/{model_name}/Production"
+    name = os.getenv("MODEL_NAME", "st126222-a3-model")
+    stage = os.getenv("MODEL_STAGE", "Production")
+    return f"models:/{name}/{stage}"
 
-    for attempt in range(5):
+_model = None
+
+def load_model(max_retries: int = 5, delay: float = 3.0):
+    """
+    Load the MLflow model, retrying on transient failures.
+    Respects MODEL_URI when set; otherwise uses RUN_ID (auto-detects subfolder) or the Registry.
+    """
+    global _model
+    if _model is not None:
+        return _model
+
+    _configure_mlflow()
+    model_uri = _resolve_model_uri()
+    log.info("Resolved MODEL_URI=%r | TRACKING=%r", model_uri, mlflow.get_tracking_uri())
+
+    last_exc = None
+    for i in range(1, max_retries + 1):
         try:
-            logging.info(f"Loading MLflow model from {model_uri} (attempt {attempt + 1}/5)")
-            model = mlflow.pyfunc.load_model(model_uri)
-            logging.info("✅ MLflow model loaded successfully")
-            return model
-        except mlflow.exceptions.MlflowException as e:
-            logging.warning(f"Attempt {attempt + 1} failed: {e}")
-            time.sleep(3)
+            log.info("[MLflow] Loading model from %s (attempt %d/%d)", model_uri, i, max_retries)
+            _model = mlflow.pyfunc.load_model(model_uri)
+            log.info("✅ MLflow model loaded successfully")
+            return _model
+        except Exception as e:
+            last_exc = e
+            log.exception("❌ Load failed (attempt %d): %s", i, e)
+            time.sleep(delay)
 
-    raise RuntimeError(f"Failed to load MLflow model after 5 attempts. Tried URI: {model_uri}")
-
-# Load MLflow model at import
-try:
-    mlflow_model = load_model()
-except Exception as e:
-    logging.error(f"MLflow model could not be loaded: {e}")
-    mlflow_model = None  # Allow app to start but prediction will fail
+    raise RuntimeError(f"Failed to load MLflow model after {max_retries} attempts. uri={model_uri!r}") from last_exc
 
 # --------------------------
 # Predict function
@@ -98,6 +157,107 @@ def predict_selling_price(max_power, mileage, year, brand):
     class_map = ["Cheap", "Average", "Expensive", "Very Expensive"]
     label = class_map[int(raw_pred)]
     return float(raw_pred), label
+
+# import os
+# import time
+# import pickle
+# import numpy as np
+# import logging
+# import mlflow
+# import mlflow.pyfunc
+# import pandas as pd
+
+# logging.basicConfig(level=logging.INFO)
+# BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# # --------------------------
+# # Paths for scaler and encoders
+# # --------------------------
+# BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# SCALER_PATH = os.path.join(BASE_DIR, "Model", "A3_prediction_scalar.model")
+# LABEL_PATH  = os.path.join(BASE_DIR, "Model", "A3_brand_label.model")
+
+# # --------------------------
+# # Load preprocessing objects
+# # --------------------------
+# with open(SCALER_PATH, "rb") as f:
+#     scaler = pickle.load(f)
+# with open(LABEL_PATH, "rb") as f:
+#     brand_encoder = pickle.load(f)
+
+# if hasattr(brand_encoder, "classes_"):
+#     brand_classes = brand_encoder.classes_.tolist()
+# elif hasattr(brand_encoder, "categories_"):
+#     brand_classes = brand_encoder.categories_[0].tolist()
+# else:
+#     brand_classes = list(brand_encoder)
+
+# def get_X(max_power, mileage, year, brand):
+#     feature_names = ["max_power", "mileage", "year"]
+#     numeric_df = pd.DataFrame([[max_power, mileage, year]], columns=feature_names)
+#     numeric_scaled = scaler.transform(numeric_df)
+#     if hasattr(brand_encoder, "transform"):
+#         brand_encoded = brand_encoder.transform([brand]).reshape(-1, 1)
+#     else:
+#         brand_encoded = np.array([[brand_encoder.index(brand)]])
+#     X = np.hstack([numeric_scaled, brand_encoded]).astype("float64")
+#     return X
+
+# # --------------------------
+# # Load MLflow model
+# # --------------------------
+# def load_model():
+#     """
+#     Load MLflow model using credentials from environment.
+#     Retries up to 5 times in case of failure.
+#     """
+#     mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "https://mlflow.ml.brain.cs.ait.ac.th/")
+#     username = os.getenv("MLFLOW_TRACKING_USERNAME")
+#     password = os.getenv("MLFLOW_TRACKING_PASSWORD")
+
+#     # Set credentials in environment before setting tracking URI
+#     if username and password:
+#         os.environ["MLFLOW_TRACKING_USERNAME"] = username
+#         os.environ["MLFLOW_TRACKING_PASSWORD"] = password
+#         logging.info(f"Using MLflow credentials: {username}/*****")
+#     else:
+#         logging.warning("No MLflow credentials found in environment")
+
+#     mlflow.set_tracking_uri(mlflow_uri)
+
+#     run_id = os.getenv("RUN_ID")
+#     model_name = os.getenv("MODEL_NAME", "st126222-a3-model")
+#     model_uri = f"runs:/{run_id}/model" if run_id else f"models:/{model_name}/Production"
+
+#     for attempt in range(5):
+#         try:
+#             logging.info(f"Loading MLflow model from {model_uri} (attempt {attempt + 1}/5)")
+#             model = mlflow.pyfunc.load_model(model_uri)
+#             logging.info("✅ MLflow model loaded successfully")
+#             return model
+#         except mlflow.exceptions.MlflowException as e:
+#             logging.warning(f"Attempt {attempt + 1} failed: {e}")
+#             time.sleep(3)
+
+#     raise RuntimeError(f"Failed to load MLflow model after 5 attempts. Tried URI: {model_uri}")
+
+# # Load MLflow model at import
+# try:
+#     mlflow_model = load_model()
+# except Exception as e:
+#     logging.error(f"MLflow model could not be loaded: {e}")
+#     mlflow_model = None  # Allow app to start but prediction will fail
+
+# # --------------------------
+# # Predict function
+# # --------------------------
+# def predict_selling_price(max_power, mileage, year, brand):
+#     model = load_model()
+#     X = get_X(max_power, mileage, year, brand)
+#     raw_pred = model.predict(X)[0]
+#     class_map = ["Cheap", "Average", "Expensive", "Very Expensive"]
+#     label = class_map[int(raw_pred)]
+#     return float(raw_pred), label
 
 
 
