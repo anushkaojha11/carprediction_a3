@@ -5,6 +5,7 @@ import numpy as np
 import logging
 import mlflow
 import mlflow.pyfunc
+import pandas as pd
 
 logging.basicConfig(level=logging.INFO)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
