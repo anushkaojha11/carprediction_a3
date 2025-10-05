@@ -6,6 +6,9 @@ services:
     # command: tail -f /dev/null
     image: anushkaojha11/a3_anushka
 
+    env_file:
+      - .env
+
     environment:
       - HOST=0.0.0.0
       - PORT=80
